@@ -1,4 +1,6 @@
-﻿namespace DotNetFrameworkDllExporter
+﻿using System.Linq;
+
+namespace DotNetFrameworkDllExporter
 {
     using System;
     using System.Collections.Generic;
@@ -19,6 +21,7 @@
 
         private static void Main(string[] args)
         {
+            RegisterAssemblyLoader();
             Start(args, Console.In, Console.Out);
 
             if (interactive)
@@ -30,6 +33,34 @@
 
                 Console.ReadKey();
             }
+        }
+
+        private static void RegisterAssemblyLoader()
+        {
+            System.AppDomain.CurrentDomain.AssemblyResolve += (s, args) =>
+            {
+                var loadedAssembly = System.AppDomain.CurrentDomain.GetAssemblies().Where(a => a.FullName == args.Name).FirstOrDefault();
+                if(loadedAssembly != null)
+                {
+                    return loadedAssembly;
+                }
+
+                if (args.RequestingAssembly == null) return null;
+
+                string folderPath = Path.GetDirectoryName(args.RequestingAssembly.Location);
+                string rawAssemblyPath = Path.Combine(folderPath, new System.Reflection.AssemblyName(args.Name).Name);
+
+                string assemblyPath = rawAssemblyPath + ".dll";
+
+                if (!File.Exists(assemblyPath))
+                {
+                    assemblyPath = rawAssemblyPath + ".exe";
+                    if (!File.Exists(assemblyPath)) return null;
+                } 
+
+                var assembly = System.Reflection.Assembly.LoadFrom(assemblyPath);
+                return assembly;
+            };            
         }
 
         private static void Start(string[] args, TextReader input, TextWriter output)

@@ -1,6 +1,7 @@
 ﻿namespace DotNetFrameworkDllExporter
 {
     using System;
+    using System.Collections;
     using System.Collections.Generic;
     using System.Linq;
     using System.Reflection;
@@ -134,6 +135,7 @@
                 string methodParamsString = string.Join(",", constructorInfo.GetParameters().Select(mt => this.GetCSharpFullName(mt.ParameterType)));
 
                 this.entityIdPrinter.PrintStartElementEntityId($"{type.Name}({methodParamsString})", EntityIdPrinter.ElementType.Concept);
+                this.PrintCustomAttributes(type);
 
                 foreach (ParameterInfo parameter in constructorInfo.GetParameters())
                 {
@@ -145,6 +147,7 @@
                     this.writer.WriteAttributeString("ref", (parameter.ParameterType.IsByRef && !parameter.IsOut).ToString());
                     this.writer.WriteAttributeString("out", parameter.IsOut.ToString());
 
+                    this.PrintCustomAttributes(parameter);
                     this.entityIdPrinter.LeaveElement();
                     this.writer.WriteEndElement();
                 }
@@ -200,6 +203,8 @@
                 this.writer.WriteAttributeString("static", methodInfo.IsStatic.ToString());
                 this.writer.WriteAttributeString("return", this.GetCSharpFullName(methodInfo.ReturnType));
 
+                this.PrintCustomAttributes(methodInfo);
+
                 // Generic parameters
                 foreach (Type genericParam in methodInfo.GetGenericArguments())
                 {
@@ -220,6 +225,7 @@
                     this.writer.WriteAttributeString("type", this.GetCSharpFullName(parameter.ParameterType));
                     this.writer.WriteAttributeString("ref", (parameter.ParameterType.IsByRef && !parameter.IsOut).ToString());
                     this.writer.WriteAttributeString("out", parameter.IsOut.ToString());
+                    this.PrintCustomAttributes(parameter);
                     this.entityIdPrinter.LeaveElement();
                     this.writer.WriteEndElement();
                 }
@@ -255,6 +261,7 @@
                 this.writer.WriteAttributeString("type", this.GetCSharpFullName(propertyInfo.PropertyType));
                 this.writer.WriteAttributeString("get", (propertyInfo.GetMethod != null).ToString());
                 this.writer.WriteAttributeString("set", (propertyInfo.SetMethod != null).ToString());
+                this.PrintCustomAttributes(propertyInfo);
                 this.entityIdPrinter.LeaveElement();
                 this.writer.WriteEndElement();
             }
@@ -276,6 +283,7 @@
                 this.writer.WriteAttributeString("name", fieldInfo.Name);
                 this.writer.WriteAttributeString("static", fieldInfo.IsStatic.ToString());
                 this.writer.WriteAttributeString("type", this.GetCSharpFullName(fieldInfo.FieldType));
+                this.PrintCustomAttributes(fieldInfo);
                 this.entityIdPrinter.LeaveElement();
                 this.writer.WriteEndElement();
             }
@@ -303,6 +311,7 @@
             this.writer.WriteAttributeString("name", this.GetNameWithoutGenericMark(type));
 
             this.PrintInheritanceOfType(type);
+            this.PrintCustomAttributes(type);
             this.PrintGenericParametersOfType(type);
             this.PrintPropertiesOfType(type);
             this.PrintMethodsOfType(type);
@@ -318,6 +327,7 @@
             this.writer.WriteAttributeString("name", this.GetNameWithoutGenericMark(type));
 
             this.PrintInheritanceOfType(type);
+            this.PrintCustomAttributes(type);
             this.PrintGenericParametersOfType(type);
             this.PrintFieldsOfType(type);
             this.PrintPropertiesOfType(type);
@@ -348,6 +358,8 @@
             this.writer.WriteAttributeString("name", this.GetNameWithoutGenericMark(type));
 
             this.PrintInheritanceOfType(type);
+
+            this.PrintCustomAttributes(type);
             this.PrintGenericParametersOfType(type);
             this.PrintFieldsOfType(type);
             this.PrintPropertiesOfType(type);
@@ -375,6 +387,7 @@
             this.writer.WriteAttributeString("name", this.GetNameWithoutGenericMark(type));
 
             this.PrintEntityIdOfType(type);
+            this.PrintCustomAttributes(type);
 
             foreach (string enumMember in type.GetEnumNames())
             {
@@ -395,11 +408,13 @@
             this.writer.WriteStartElement("Delegate");
 
             this.PrintEntityIdOfType(type);
+            
             this.writer.WriteAttributeString("name", this.GetNameWithoutGenericMark(type));
 
             MethodInfo methodInfo = type.GetMethod("Invoke");
             this.writer.WriteAttributeString("return", this.GetCSharpFullName(methodInfo.ReturnType));
 
+            this.PrintCustomAttributes(type);
             this.PrintGenericParametersOfType(type);
 
             foreach (ParameterInfo parameter in methodInfo.GetParameters())
@@ -415,6 +430,66 @@
                 this.writer.WriteEndElement();
             }
 
+            this.entityIdPrinter.LeaveElement();
+            this.writer.WriteEndElement();
+        }
+
+        private void PrintCustomAttributes(ICustomAttributeProvider customAttributeProvider)
+        {
+            var customAttributes = customAttributeProvider.GetCustomAttributes(false);
+            foreach (var customAttribute in customAttributes)
+            {
+                this.writer.WriteStartElement("CustomAttribute");
+                if (customAttribute is Attribute attr && !attr.IsDefaultAttribute())
+                {
+                    var attrName = attr.GetType().ToString();
+                    this.entityIdPrinter.PrintStartElementEntityId(attrName, EntityIdPrinter.ElementType.Concept);
+                    this.writer.WriteAttributeString("type", attrName);
+                    foreach (var runtimeProperty in attr.GetType().GetProperties().Where(p => p.CanWrite).Where(p => p.Name != "TypeId"))
+                    {
+                        var value = runtimeProperty.GetValue(attr);
+                        if (value == null)
+                        {
+                            continue;
+                        }
+
+                        this.writer.WriteStartElement("AttributeValue");
+                        this.entityIdPrinter.PrintStartElementEntityId(runtimeProperty.Name, EntityIdPrinter.ElementType.Concept);
+                        this.writer.WriteAttributeString("name", runtimeProperty.Name);
+                        if (!(value is IList valueList))
+                        {
+                            this.PrintAttributePropertyValue(value, 0);
+                        }
+                        else
+                        {
+                            for (var i = 0; i < valueList.Count; i++)
+                            {
+                                var item = valueList[i];
+                                this.PrintAttributePropertyValue(item, i);
+                            }
+                        }
+
+                        this.entityIdPrinter.LeaveElement();
+                        this.writer.WriteEndElement();
+                    }
+
+                    this.entityIdPrinter.LeaveElement();
+                }
+                else
+                {
+                    this.writer.WriteAttributeString("content", customAttribute.GetType().ToString());
+                }
+                
+                this.writer.WriteEndElement();
+            }
+        }
+
+        private void PrintAttributePropertyValue(object value, int index)
+        {
+            this.writer.WriteStartElement("value");
+            this.entityIdPrinter.PrintStartElementEntityId(index.ToString(), EntityIdPrinter.ElementType.Concept);
+            this.writer.WriteAttributeString("type", value.GetType().ToString());
+            this.writer.WriteAttributeString("value", value.ToString());
             this.entityIdPrinter.LeaveElement();
             this.writer.WriteEndElement();
         }
